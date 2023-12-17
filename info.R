@@ -1,0 +1,2 @@
+# Welcome to one of my R small models, this one was created back in 2022 as my academic work (in group of 4)
+# The whole project is in both html and rmd files and was created by 4 people as mentioned above
