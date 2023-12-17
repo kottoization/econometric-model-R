@@ -1,0 +1,164 @@
+---
+title: "Przewidywanie dotyczące zatwierdzenia zgody na posiadanie karty kredytowej"
+author: "Gabriela Maślanka, Mateusz Mulka, Karolina Gajewska, Karina Krotkiewicz"
+output: html_document
+---
+**__Informatyka i Ekonometria__**
+
+W projekcie wykorzystano dane zawierające oczyszczoną wersję danych z repozytorium systemów uczących się po zatwierdzeiu kart kredytowych. Zmienne objaśniające, na których oparto badanie to:  
+-__Gender__ - płeć  
+-__Age__ - wiek  
+-__Debt__ - dług  
+-__Married__ - status małżeński  
+-__BankCustomer__ - klient banku  
+-__Industry__ - miejsce zatrudnienia  
+-__Ethnicity__- pochodzenie etniczne  
+-__YearsEmployed__- lata zatrudnienia  
+-__PriorDefault__ - wcześniejsze zadłużenia   
+-__Employed__ - status zatrudnienia  
+-__CreditScore__ - zdolność kredytowa  
+-__DriversLicence__ - posiadanie prawa jazdy  
+-__Citizen__ - sposób nabycia obywatelstwa  
+-__ZipCode__ - kod pocztowy  
+-__Income__ - dochód
+Zmienną objaśnianą jest Approved, czyli wspominane wcześniej zatwierdzenie, zgoda na posiadanie karty kredytowej.  
+  
+**Zainstalowano pomocne przy pracy pakiety**
+```{r}
+library(tidyverse)  
+library(magrittr)  
+library(dplyr)  
+library(ggplot2) 
+```
+
+  
+### Importowanie i przygotowanie danych z pliku
+```{r}
+data <- read.csv("data.csv")%>%
+  select(-ZipCode)
+summary(data)
+data <- data[complete.cases(data),]
+```
+Zamiana zmiennych na faktory w celu reprezentacji zmiennych kategorycznych w modelu:
+Najpierw zajmujemy się kolumną Industry, zamieniamy ją na faktory.
+```{r}
+table(data$Industry)
+data<-data %>% mutate(Industry=as.factor(Industry))
+```
+  Następnie przechodzimy do wartości z kolumny Citizen, wyświetlamy je sobie, z racji że wartości ByOtherMeans i     Temporary jest dosyć mało łączymy je w jeden poziom o nazwie Other.
+```{r}
+table(data$Citizen)
+data<-data %>% mutate(Citizen=as.vector(Citizen))
+data<-data%>%mutate(Citizen = if_else(Citizen=="Temporary", "Other", Citizen))
+data<-data%>%mutate(Citizen = if_else(Citizen=="ByOtherMeans", "Other", Citizen))
+data<-data %>% mutate(Citizen=as.factor(Citizen))
+table(data$Citizen)
+
+
+```
+Tak samo postępujemy z kolumną Ethnicity, łączymy te których jest najmniej aby poziomy miały stosunkowo podobną ilość wartości.
+```{r}
+table(data$Ethnicity)
+data<-data%>%mutate(Ethnicity = if_else(Ethnicity=="Latino", "Other", Ethnicity))
+data<-data%>%mutate(Ethnicity = if_else(Ethnicity=="Asian", "Other", Ethnicity))
+table(data$Ethnicity)
+data<-data %>% mutate(Ethnicity=as.factor(Ethnicity))
+```
+Sprawdzamy jak rozkładają się wartości w kolumnie Married. 
+```{r}
+
+table(data$Married)
+
+```
+Dodajemy kolumnę Nr aby nasze wiersze były ponumerowane.Numery są nam potrzebne aby podzielić nasz projekt losowo w taki sposób, aby wartości się nie powtarzały.
+```{r}
+data$Nr<-c(1:nrow(data))
+```
+
+
+# Tworzenie modelu
+Na początku dzielimy dane na zbiór treningowy i testowy w proporcji 80% i 20%.
+```{r}
+train<-data%>%slice_sample(prop=0.8)
+test<-data%>%filter(!(Nr %in% train$Nr))
+```
+Tworzymy model ze wszystkich danych na zbiorze treningowym.
+```{r}
+model<-glm(Approved ~Age+Debt+Married+BankCustomer+Industry+YearsEmployed+Employed+CreditScore+Citizen+Income,
+           family=binomial(link='logit'), train)
+model
+```
+
+Z powodu wielu poziomów zmiennej Industry patrzymy jak rozkłada się prawdopodobieństwo przyznania karty w zależności od poziomu Industry.
+```{r}
+df<-data.frame(data$Industry, data$Approved)
+aggregate(df$data.Approved,list(df$data.Industry), FUN=mean )
+```
+Widzimy że prawdopodobieństwa nie są podobne, więc odrzucimy tą zmienną.
+
+Wybrałyśmy sposób selekcji zmiennych poprzez odrzucanie na podstawie istotności.
+```{r}
+
+model<-glm(Approved ~ .-Nr  -Industry -Age - Debt - Married - BankCustomer - Gender - Ethnicity- CreditScore -Citizen - DriversLicense,
+           family=binomial(link='logit'), train)
+summary(model)
+```
+Zmienne które nam zostały, z których będzie stworzony nasz model to YearsEmployed, PriorDefault, Employed i Income.
+
+## Diagnostyka Modelu
+Najpierw sprawdzamy korelację między zmiennymi w naszym modelu
+```{r}
+
+cor(train[,c("Age","Debt","YearsEmployed","Income")])
+```
+Wartości są dosyć niskie, czyli korelacja jest dosyć słaba.
+
+Sprawdzamy czy istnieje liniowa zależność.
+```{r}
+prediction<-predict(model,type="response")
+train$logp<-log(prediction/(1-prediction))
+plot(train$YearsEmployed, train$logp)
+plot(train$Income, train$logp)
+```
+
+Zależności są dosyć liniowe, czyli takie jakie chcieliśmy.
+Wynika z tego że zmienna objaśniana zależy liniowo od zmienych niebinarnych objaśniających.
+
+Wykonujemy predykcje dla danych ze zbioru treningowego aby zobaczyć w ilu przypadkach model zadziałał prawidłowo.
+```{r}
+train_prediction<- ifelse(prediction>=0.5,1,0)
+table(train_prediction, train$Approved)
+```
+Następnie wykojemy predykcje na zbiorze testowym
+```{r}
+test_prediction<-predict(model,test, type = 'response')
+
+test_prediction<- ifelse(test_prediction>=0.5,1,0)
+
+```
+Następnie wyświetlamy wyniki:
+```{r}
+
+table = table(test_prediction, test$Approved)
+#accuracy
+Acc = (table[1,1]+ table[2,2])/sum(table)
+#sensitivity - wra?liwos? - ile procent ze wszystkich jedynek nam si? uda?o przewidzie? jako jedynki
+
+Sen<- table[2,2]/sum(table[,2])
+
+#specificity- specyficznosc
+Spec<- table[1,1]/sum(table[,1])
+table
+Acc
+Sen
+Spec
+```
+Widzimy, że wartości są dość duże, jest to satysfakcjonujący nas wynik. 
+###### Accuracy
+Accuracy określa stosunek prawidłowych przypisań wartości zmiennej objaśnianej, do wszystkich przypisań tej wartości. Wynik 0.884058 oznacza, że 88,4% wyników uzyskanych przez nasz model zostało przypisane prawidłowo, odnosi się to zarówno do wartości 0 jak i 1. 
+###### Sensitivity
+Wartość sensitivity (wrażliwość modelu, inaczej nazywana też precision) jest stosunkiem liczebności y=1 prawidłowo przypisanych do wszystkich wartości które zostałY przypisane do wartości y=1. Wartość czułości na poziomie 93,3% oznacza, że spośród osób które według naszego modelu powinny dostać kartę kredytową 93,3% zgadzało się z prawdziwymi wartościami zbioru testowego. 
+###### Specificity
+Specificity (nazywana też recall) jest stosunkiem wartości poprawnie zaklasyfikowanych jako wynik 1 do wszystkich które powinny zostać zaklasyfikowane jako wartości y=1 
+###### Wnioski 
+Skoro wartość współczynnika sensivity jest wyższa od accuracy oraz specifity oznacza to, że niektóre wartości które powinny być zaklasyfikowane jako 1 zostały zaklasyfikowane jako 0 i na odwrót, widzimy jednak, że sytuacji odwrotnych było zdecydowanie mniej. Możemy zatem przyjąć, że dokładność naszego modelu wynosi 88,4% przy jednoczesnym przypisaniu poprawnie 93,3% obserwacji, spośród osób które nasz model zaklasyfikował do osób dostających kartę kredytową.
